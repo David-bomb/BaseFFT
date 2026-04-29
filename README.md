@@ -18,7 +18,7 @@
 
 ## Способ решения
 
-**FSDP `FULL_SHARD`** на 2×T4: модель, градиенты и optimizer state шардируются между двумя GPU, что позволяет уместить 1.7B-параметрическую модель + оптимизатор в 2×16 GB VRAM. В качестве оптимизатора — `bitsandbytes.PagedAdamW8bit` (8-битные моменты Adam с paged-аллокацией для overflow в RAM).
+**FSDP `FULL_SHARD`** на 2×T4: модель, градиенты и optimizer state шардируются между двумя GPU, что позволяет уместить 1.7B-параметрическую модель + оптимизатор в 2×16 GB VRAM. В качестве оптимизатора — `bitsandbytes.PagedAdamW8bit`.
 
 Дополнительно:
 - `gradient_checkpointing` (use_reentrant=False) — ещё снижение пика VRAM ценой ~30% времени.
@@ -27,7 +27,8 @@
 - Эффективный батч 16 = `per_device_bs=1 × world_size=2 × grad_accum=8`.
 - `max_seq_len=1024` — компромисс между покрытием датасета и памятью.
 
-Данные — `allenai/tulu-3-sft-mixture` (939K примеров). Берём strict-фильтрованный subset 50K: только примеры, которые ПОЛНОСТЬЮ помещаются в 1024 токена после применения ChatML-шаблона (никаких truncate — обрезанная инструкция != валидный SFT-пример).
+Данные — `allenai/tulu-3-sft-mixture` (939K примеров). Берём strict-фильтрованный subset 50K: только примеры, которые ПОЛНОСТЬЮ помещаются в 1024 токена после применения ChatML-шаблона (никаких truncate — обрезанная инструкция != валидный SFT-пример). 
+Взято всего 50к примеров, чтобы обучение не длилось слишком долго (есть серьезные ограничения по времени от Kaggle).
 
 ---
 
@@ -63,14 +64,12 @@ ChatML-шаблон задаём вручную, потому что у `Qwen3-B
 - `/kaggle/working/SFT-final-model/` — HF-формат для eval (~3.4 GB, fp16).
 - `/kaggle/working/metrics_train.json` — лог тренировки.
 
-### Этап 3 — `3_eval_multi_local.ipynb` (локальный IFEval)
+### Этап 3 — `3_eval_multi_local.ipynb` 
 
-Этот блокнот запускается **локально**, не на Kaggle (Kaggle ограничивает время сессии и возможностей кастомного pip нет в нужном объёме). Скачиваем все нужные `ckpt-step-*.pt` в подпапку `./checkpoints/`, и блокнот:
+Скачиваем все нужные `ckpt-step-*.pt` в подпапку `./checkpoints/`, и блокнот:
 1. Загружает базу `Qwen/Qwen3-1.7B-Base`, прогоняет IFEval, сохраняет метрики.
 2. Для каждого `ckpt-step-*.pt`: загружает FSDP-payload (fp32) → кастит к fp16 → `model.load_state_dict(sd, strict=False)` поверх свежего HF-инстанса → экспортирует во временную HF-директорию → прогоняет IFEval.
 3. Печатает pretty-table сравнение base vs все SFT-чекпойнты с дельтами.
-
-IFEval запускается на 100 промптах из 541 (`NUM_BENCHS=100`, `SHUFFLE_SEED=42`). Чтобы дельты были корректными, monkey-patch на `lm_eval.evaluator.get_task_dict` гарантирует, что **все модели оцениваются на ОДНИХ И ТЕХ ЖЕ 100 индексах**.
 
 ---
 
@@ -153,7 +152,6 @@ jupyter notebook 3_eval_multi_local.ipynb
 ├── 1-base-fft-eda.ipynb       # EDA + подготовка train.jsonl/val.jsonl
 ├── 2-base-fft-fft.ipynb       # FSDP full fine-tune на 2×T4 (Kaggle)
 ├── 3_eval_multi_local.ipynb   # IFEval сравнение base vs N SFT (локально)
-└── CLAUDE.md                  # инженерные заметки для будущих агентов Claude Code
 ```
 
 Никакого Python-пакета, тестов или CI здесь нет — это намеренно. Pipeline живёт в трёх блокнотах, потому что таково ограничение Kaggle.
